@@ -56,6 +56,12 @@ func Pt(x, y int) fixed.Point26_6 {
 	}
 }
 
+type StrokeOpts struct {
+	Width  fixed.Int26_6
+	Capper raster.Capper
+	Joiner raster.Joiner
+}
+
 // A Context holds the state for drawing text in a given font and size.
 type Context struct {
 	r        *raster.Rasterizer
@@ -72,7 +78,8 @@ type Context struct {
 	scale         fixed.Int26_6
 	hinting       font.Hinting
 	// cache is the glyph cache.
-	cache [nGlyphs * nXFractions * nYFractions]cacheEntry
+	cache  [nGlyphs * nXFractions * nYFractions]cacheEntry
+	stroke *StrokeOpts
 }
 
 // PointToFixed converts the given number of points (as in "a 12 point font")
@@ -120,7 +127,8 @@ func (c *Context) drawContour(ps []truetype.Point, dx, dy fixed.Int26_6) {
 			others = ps
 		}
 	}
-	c.r.Start(start)
+	var path raster.Path
+	path.Start(start)
 	q0, on0 := start, true
 	for _, p := range others {
 		q := fixed.Point26_6{
@@ -130,9 +138,9 @@ func (c *Context) drawContour(ps []truetype.Point, dx, dy fixed.Int26_6) {
 		on := p.Flags&0x01 != 0
 		if on {
 			if on0 {
-				c.r.Add1(q)
+				path.Add1(q)
 			} else {
-				c.r.Add2(q0, q)
+				path.Add2(q0, q)
 			}
 		} else {
 			if on0 {
@@ -142,16 +150,21 @@ func (c *Context) drawContour(ps []truetype.Point, dx, dy fixed.Int26_6) {
 					X: (q0.X + q.X) / 2,
 					Y: (q0.Y + q.Y) / 2,
 				}
-				c.r.Add2(q0, mid)
+				path.Add2(q0, mid)
 			}
 		}
 		q0, on0 = q, on
 	}
 	// Close the curve.
 	if on0 {
-		c.r.Add1(start)
+		path.Add1(start)
 	} else {
-		c.r.Add2(q0, start)
+		path.Add2(q0, start)
+	}
+	if c.stroke != nil {
+		c.r.AddStroke(path, c.stroke.Width, c.stroke.Capper, c.stroke.Joiner)
+	} else {
+		c.r.AddPath(path)
 	}
 }
 
@@ -326,6 +339,15 @@ func (c *Context) SetSrc(src image.Image) {
 // SetClip sets the clip rectangle for drawing.
 func (c *Context) SetClip(clip image.Rectangle) {
 	c.clip = clip
+}
+
+func (c *Context) SetStroke(stroke *StrokeOpts) {
+	c.stroke = stroke
+	if stroke != nil {
+		c.r.UseNonZeroWinding = true
+	} else {
+		c.r.UseNonZeroWinding = false
+	}
 }
 
 // TODO(nigeltao): implement Context.SetGamma.
